@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Graph Editor</title>
+    <style>
+        body { margin: 0; display: flex; font-family: Arial, sans-serif; }
+        canvas { border: 1px solid #ccc; margin: 10px; }
+        .controls {
+            padding: 20px;
+            background: #f5f5f5;
+            width: 300px;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .control-group { margin-bottom: 20px; }
+        textarea { width: 100%; height: 150px; margin: 10px 0; }
+        button { margin: 5px; padding: 8px 15px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <h2>Graph Editor</h2>
+        
+        <div class="control-group">
+            <h3>Text Input</h3>
+            <p>Enter edges 1 per line ex:<br> 1 2<br> 2 3<br> 1 3<br></p>
+            <textarea id="graphData" placeholder="Enter edges (e.g., 1 2&#10;2 3&#10;3 4)"></textarea>
+            <button onclick="parseGraph()">Load from Text</button>
+        </div>
+
+        <div class="control-group">
+            <h3>Appearance</h3>
+            <label>Node Color: <input type="color" id="nodeColor" value="#2196F3"></label>
+            <label>Background: <input type="color" id="bgColor" value="#ffffff"></label>
+            <label>Node Radius: <input type="range" id="nodeRadius" min="10" max="30" value="20"></label>
+        </div>
+
+        <div class="control-group">
+            <h3>Actions</h3>
+            <button onclick="stabilize()">Stabilize Graph</button>
+            <button onclick="downloadPNG()">Download PNG</button>
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let width = window.innerWidth - 340;
+let height = window.innerHeight;
+canvas.width = width;
+canvas.height = height;
+
+let nodes = [];
+let edges = [];
+let selectedNode = null;
+let dragging = false;
+let dragStartTime = 0;
+
+const physicsSettings = {
+    repulsion: 100,
+    stiffness: 0.1,
+    damping: 0.8,
+    centerPull: 0.01
+};
+
+class Node {
+    constructor(id, x, y) {
+        this.id = id;
+        this.label = id.toString();
+        this.x = x || width/2 + (Math.random() - 0.5) * 100;
+        this.y = y || height/2 + (Math.random() - 0.5) * 100;
+        this.vx = 0;
+        this.vy = 0;
+        this.radius = parseInt(document.getElementById('nodeRadius').value);
+        this.color = document.getElementById('nodeColor').value;
+        this.fixed = false;
+    }
+}
+
+function updatePhysics() {
+    nodes.forEach(node => {
+        if (node.fixed) return;
+        
+        node.vx += (width/2 - node.x) * physicsSettings.centerPull;
+        node.vy += (height/2 - node.y) * physicsSettings.centerPull;
+
+        nodes.forEach(other => {
+            if (node === other) return;
+            const dx = other.x - node.x;
+            const dy = other.y - node.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            const force = physicsSettings.repulsion / (dist * 0.7);
+            node.vx -= force * dx / dist;
+            node.vy -= force * dy / dist;
+        });
+
+        node.vx *= physicsSettings.damping;
+        node.vy *= physicsSettings.damping;
+        node.x += node.vx;
+        node.y += node.vy;
+    });
+}
+
+function draw() {
+    ctx.fillStyle = document.getElementById('bgColor').value;
+    ctx.fillRect(0, 0, width, height);
+
+    edges.forEach(([node1, node2]) => {
+        ctx.beginPath();
+        ctx.moveTo(node1.x, node1.y);
+        ctx.lineTo(node2.x, node2.y);
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    });
+
+    nodes.forEach(node => {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        ctx.fillStyle = node.color;
+        ctx.fill();
+        
+        ctx.fillStyle = '#fff';
+        ctx.font = `${node.radius}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(node.label, node.x, node.y);
+        
+        if (node.fixed) {
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    });
+
+    requestAnimationFrame(draw);
+}
+
+function parseGraph() {
+    const input = document.getElementById('graphData').value;
+    const lines = input.split('\n');
+    const nodeMap = new Map();
+    
+    nodes = [];
+    edges = [];
+    
+    lines.forEach(line => {
+        const [id1, id2] = line.trim().split(/\s+/);
+        if (!id1 || !id2) return;
+        
+        if (!nodeMap.has(id1)) {
+            const node = new Node(id1);
+            nodeMap.set(id1, node);
+            nodes.push(node);
+        }
+        if (!nodeMap.has(id2)) {
+            const node = new Node(id2);
+            nodeMap.set(id2, node);
+            nodes.push(node);
+        }
+        
+        edges.push([nodeMap.get(id1), nodeMap.get(id2)]);
+    });
+    
+    const angleStep = (Math.PI * 2) / nodes.length;
+    nodes.forEach((node, i) => {
+        node.x = width/2 + Math.cos(angleStep * i) * 200;
+        node.y = height/2 + Math.sin(angleStep * i) * 200;
+    });
+}
+
+function stabilize() {
+    physicsSettings.repulsion = 50;
+    setTimeout(() => physicsSettings.repulsion = 100, 1000);
+}
+
+canvas.addEventListener('mousedown', e => {
+    dragStartTime = Date.now();
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    selectedNode = nodes.find(node => {
+        const dx = x - node.x;
+        const dy = y - node.y;
+        return dx*dx + dy*dy < node.radius*node.radius;
+    });
+
+    if(selectedNode) {
+        dragging = true;
+        selectedNode.fixed = true;
+    }
+});
+
+canvas.addEventListener('mousemove', e => {
+    if (dragging && selectedNode) {
+        const rect = canvas.getBoundingClientRect();
+        selectedNode.x = e.clientX - rect.left;
+        selectedNode.y = e.clientY - rect.top;
+    }
+});
+
+canvas.addEventListener('mouseup', e => {
+    if(selectedNode && Date.now() - dragStartTime < 200) {
+        selectedNode.fixed = !selectedNode.fixed;
+    }
+    dragging = false;
+    selectedNode = null;
+});
+
+canvas.addEventListener('dblclick', e => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const clickedNode = nodes.find(node => {
+        const dx = x - node.x;
+        const dy = y - node.y;
+        return dx*dx + dy*dy < node.radius*node.radius;
+    });
+
+    if(clickedNode) {
+        const newLabel = prompt('Edit node label:', clickedNode.label);
+        if(newLabel) clickedNode.label = newLabel;
+    }
+});
+
+document.getElementById('nodeRadius').addEventListener('input', function() {
+    nodes.forEach(node => node.radius = parseInt(this.value));
+});
+
+document.getElementById('nodeColor').addEventListener('input', function() {
+    nodes.forEach(node => node.color = this.value);
+});
+
+setInterval(updatePhysics, 1000/60);
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
